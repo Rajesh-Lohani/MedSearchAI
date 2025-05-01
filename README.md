@@ -54,7 +54,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
         *   **Image Files:**
             *   The file is read as a `dataURI`.
             *   The `extractTextFromImage` flow (using a multimodal model) is called to perform OCR.
-        *   Extracted text is stored in `reportText` (displayed, potentially truncated for long files) and `fullReportText` (used for AI context).
+        *   Extracted text is stored in `reportText` (displayed) and `fullReportText` (used for AI context).
     *   **Summarization:**
         *   Clicking "Summarize Report" triggers the `handleSummarize` function.
         *   It calls the `summarizeReport` Genkit flow, passing the `fullReportText`.
@@ -81,7 +81,7 @@ This is a Next.js application built with Firebase Studio that allows users to up
         *   Returns the generated `answer`.
 
 3.  **Genkit Setup (`src/ai/ai-instance.ts`, `src/app/api/genkit/[...slug]/route.ts`):**
-    *   `ai-instance.ts`: Initializes the core `ai` object using `genkit` and the `@genkit-ai/googleai` plugin, configured with an API key from environment variables. It sets the default model.
+    *   `ai-instance.ts`: Initializes the core `ai` object using `genkit` and the `@genkit-ai/googleai` plugin, configured with an API key from environment variables. It sets the default model to `googleai/gemini-2.0-flash`.
     *   `route.ts`: Uses `@genkit-ai/next`'s `createApp()` to expose the defined Genkit flows (imported from `src/ai/flows/`) as API endpoints under `/api/genkit/...`. This allows the client-side code in `page.tsx` to call the server-side flows.
 
 4.  **UI Components & Styling:**
@@ -89,6 +89,72 @@ This is a Next.js application built with Firebase Studio that allows users to up
     *   `src/app/globals.css` defines the overall theme (colors, fonts, etc.) using CSS variables for light and dark modes, including specific styles for the sidebar.
     *   `tailwind.config.ts` configures Tailwind CSS, mapping theme variables to Tailwind classes.
     *   `src/app/layout.tsx` sets up the root layout, including the `SidebarProvider` and `Toaster` for notifications.
+
+## Code Flow Diagram
+
+```mermaid
+graph LR
+    subgraph User Interface (src/app/page.tsx)
+        A[Upload File/Paste Text] --> B{File Type?};
+        B -- .txt --> C[Read Text];
+        B -- .pdf --> D[Load PDF Library (pdfjs-dist)];
+        B -- .png/.jpg/.webp --> E[Read Image as Data URI];
+        D --> F[Extract Text from PDF];
+        F -- Text Extraction Failed --> E;
+        E --> G[Call extractTextFromImage Flow];
+        C --> H{Extracted Text?};
+        F --> H;
+        G --> H;
+        H -- Yes --> I[Set reportText & fullReportText];
+        H -- No --> J[Error Message];
+        I --> K[Display Report Text];
+        K --> L[Click Summarize Report];
+        L --> M[Call summarizeReport Flow];
+        K --> N[Enter Question in Chat];
+        N --> O[Call chatWithReport Flow];
+        M --> P[Display Summary];
+        O --> Q[Display Chatbot Response];
+    end
+
+    subgraph Genkit Flows (src/ai/flows/)
+        S[extractTextFromImage.ts] --> T[Extract Text from Image using Gemini];
+        U[summarizeReport.ts] --> V[Summarize Report using Gemini];
+        W[chatWithReport.ts] --> X[Chat with Report using Gemini];
+    end
+
+    subgraph Genkit API (src/app/api/genkit/[...slug]/route.ts)
+        Y[API Endpoint for Genkit Flows];
+    end
+
+    subgraph Genkit Instance (src/ai/ai-instance.ts)
+        Z[Initialize Genkit with Google AI Plugin];
+    end
+
+    G --> S;
+    M --> V;
+    N --> W;
+    Y --> S;
+    Y --> V;
+    Y --> W;
+    Z --> S;
+    Z --> V;
+    Z --> W;
+```
+
+**Diagram Explanation:**
+
+1.  **User Interface:** The flow starts with the user interacting with the UI in `src/app/page.tsx`.
+    *   The user either uploads a file or pastes text.
+    *   The application processes the file based on its type (text, PDF, image).
+    *   If text extraction is successful, the text is displayed.
+    *   The user can then choose to summarize the report or chat with the report.
+    *   These actions trigger calls to the Genkit flows.
+2.  **Genkit Flows:** The Genkit flows in `src/ai/flows/` handle the AI logic.
+    *   `extractTextFromImage.ts`: Extracts text from images using the Gemini model.
+    *   `summarizeReport.ts`: Summarizes the report text using the Gemini model.
+    *   `chatWithReport.ts`: Chats with the report text using the Gemini model.
+3.  **Genkit API:** The API endpoint in `src/app/api/genkit/[...slug]/route.ts` exposes the Genkit flows as API endpoints, allowing the UI to call them.
+4.  **Genkit Instance:** The Genkit instance in `src/ai/ai-instance.ts` initializes Genkit with the Google AI plugin, providing the necessary configuration for accessing the Gemini models.
 
 ## Key Technologies
 
