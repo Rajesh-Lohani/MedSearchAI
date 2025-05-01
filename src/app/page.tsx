@@ -1,32 +1,60 @@
 'use client';
 
 import * as React from 'react';
+import * as pdfjsLib from 'pdfjs-dist';
 import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
   SidebarTrigger,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarInset,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Upload, FileText, Loader2 } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Upload, FileText, Loader2, Bot, User, Send } from 'lucide-react';
 import { summarizeReport, type SummarizeReportOutput } from '@/ai/flows/summarize-report';
+import { chatWithReport, type ChatWithReportInput, type ChatWithReportOutput } from '@/ai/flows/chat-with-report';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
+
+// Configure pdfjs-dist worker
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+}
+
+interface ChatMessage {
+  sender: 'user' | 'bot';
+  text: string;
+}
 
 export default function Home() {
   const [reportText, setReportText] = React.useState('');
+  const [fullReportText, setFullReportText] = React.useState(''); // Store original text for chat
   const [summary, setSummary] = React.useState<SummarizeReportOutput | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [isSummarizing, setIsSummarizing] = React.useState(false);
+  const [isChatting, setIsChatting] = React.useState(false);
   const [fileName, setFileName] = React.useState('');
   const { toast } = useToast();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Chat state
+  const [chatHistory, setChatHistory] = React.useState<ChatMessage[]>([]);
+  const [userQuestion, setUserQuestion] = React.useState('');
+  const chatScrollAreaRef = React.useRef<HTMLDivElement>(null);
+
+  // Scroll chat to bottom on new message
+  React.useEffect(() => {
+    if (chatScrollAreaRef.current) {
+      chatScrollAreaRef.current.scrollTo({
+        top: chatScrollAreaRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
+  }, [chatHistory]);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -34,30 +62,41 @@ export default function Home() {
       setFileName(file.name);
       setIsLoading(true);
       setSummary(null); // Clear previous summary
+      setChatHistory([]); // Clear chat history
+      setUserQuestion(''); // Clear chat input
+      setReportText(''); // Clear displayed text
+      setFullReportText(''); // Clear full text store
+
       try {
-        // Basic file type check (more robust checks might be needed for production)
+        let extractedText = '';
         if (file.type === 'text/plain') {
-          const text = await file.text();
-          setReportText(text);
+          extractedText = await file.text();
         } else if (file.type === 'application/pdf') {
-          // Placeholder for PDF processing - requires a library like pdf-parse
-          // For now, we'll just show a message
-          setReportText(`PDF processing is not yet implemented. Please upload a text file.`);
-          toast({
-            title: 'PDF Upload Notice',
-            description: 'PDF processing is not yet fully implemented. Please use a .txt file for now.',
-            variant: 'destructive',
-          });
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const numPages = pdf.numPages;
+          let pdfText = '';
+          for (let i = 1; i <= numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            pdfText += textContent.items.map((item: any) => item.str).join(' ') + '\n';
+          }
+          extractedText = pdfText;
         } else {
           throw new Error('Unsupported file type. Please upload a .txt or .pdf file.');
         }
+
+        setReportText(extractedText); // Display extracted text (can be long for PDFs)
+        setFullReportText(extractedText); // Store full text for chat context
+
       } catch (error: any) {
-        console.error('Error reading file:', error);
+        console.error('Error reading or parsing file:', error);
         setReportText('');
+        setFullReportText('');
         setFileName('');
         toast({
-          title: 'Error Reading File',
-          description: error.message || 'Could not read the uploaded file.',
+          title: 'Error Processing File',
+          description: error.message || 'Could not process the uploaded file.',
           variant: 'destructive',
         });
       } finally {
@@ -67,16 +106,18 @@ export default function Home() {
   };
 
   const handleSummarize = async () => {
-    if (!reportText || reportText.startsWith('PDF processing')) {
-        toast({
-            title: 'No Report Text',
-            description: 'Please upload a valid text file or paste the report text.',
-            variant: 'destructive',
-        });
+    if (!reportText) {
+      toast({
+        title: 'No Report Text',
+        description: 'Please upload a valid text or PDF file or paste the report text.',
+        variant: 'destructive',
+      });
       return;
     }
     setIsLoading(true);
+    setIsSummarizing(true);
     setSummary(null);
+    setChatHistory([]); // Reset chat when summarizing new report
     try {
       const result = await summarizeReport({ reportText });
       setSummary(result);
@@ -86,15 +127,50 @@ export default function Home() {
       });
     } catch (error) {
       console.error('Error summarizing report:', error);
-       toast({
+      toast({
         title: 'Summarization Error',
         description: 'An error occurred while summarizing the report.',
         variant: 'destructive',
       });
     } finally {
       setIsLoading(false);
+      setIsSummarizing(false);
     }
   };
+
+  const handleChatSubmit = async (e?: React.FormEvent<HTMLFormElement>) => {
+    e?.preventDefault();
+    if (!userQuestion.trim() || !fullReportText) {
+      return;
+    }
+
+    const newQuestion: ChatMessage = { sender: 'user', text: userQuestion };
+    setChatHistory((prev) => [...prev, newQuestion]);
+    setUserQuestion('');
+    setIsChatting(true);
+
+    try {
+        const input: ChatWithReportInput = {
+            reportText: fullReportText, // Use full report text for context
+            question: newQuestion.text,
+        };
+      const result: ChatWithReportOutput = await chatWithReport(input);
+      const botResponse: ChatMessage = { sender: 'bot', text: result.answer };
+      setChatHistory((prev) => [...prev, botResponse]);
+    } catch (error) {
+      console.error('Error chatting with report:', error);
+      const errorResponse: ChatMessage = { sender: 'bot', text: 'Sorry, I encountered an error trying to answer your question.' };
+      setChatHistory((prev) => [...prev, errorResponse]);
+      toast({
+        title: 'Chat Error',
+        description: 'An error occurred while getting the chat response.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsChatting(false);
+    }
+  };
+
 
   const triggerFileInput = () => {
     fileInputRef.current?.click();
@@ -113,18 +189,18 @@ export default function Home() {
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b bg-background px-4 sm:static sm:h-auto sm:border-0 sm:bg-transparent sm:px-6 py-4">
           <SidebarTrigger className="sm:hidden" />
-          <h1 className="text-xl font-semibold">Medical Report Summarizer</h1>
+          <h1 className="text-xl font-semibold">Medical Report Assistant</h1>
         </header>
         <main className="flex flex-1 flex-col gap-4 p-4 sm:px-6 sm:py-0 md:gap-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Report Upload Section */}
-            <Card className="shadow-md">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Report Upload & Display Section */}
+            <Card className="shadow-md lg:col-span-2">
               <CardHeader>
                 <CardTitle>Upload or Paste Report</CardTitle>
-                <CardDescription>Upload a .txt file or paste the medical report text below.</CardDescription>
+                <CardDescription>Upload a .txt or .pdf file, or paste the medical report text below.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid w-full max-w-sm items-center gap-1.5">
+                <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="report-file">Upload File</Label>
                   <div className="flex gap-2">
                     <Input
@@ -134,34 +210,40 @@ export default function Home() {
                       onChange={handleFileChange}
                       ref={fileInputRef}
                       className="hidden" // Hide the default input
+                      disabled={isLoading}
                     />
-                    <Button variant="outline" onClick={triggerFileInput} className="flex-grow">
+                    <Button variant="outline" onClick={triggerFileInput} className="flex-grow" disabled={isLoading}>
                       <Upload className="mr-2 h-4 w-4" /> Choose File
                     </Button>
-                     {fileName && (
-                        <div className="flex items-center text-sm text-muted-foreground border rounded-md px-3 py-1 bg-secondary">
-                            <FileText className="mr-2 h-4 w-4 text-secondary-foreground" />
-                            <span className="truncate max-w-[150px]">{fileName}</span>
-                        </div>
+                    {fileName && (
+                      <div className="flex items-center text-sm text-muted-foreground border rounded-md px-3 py-1 bg-secondary">
+                        <FileText className="mr-2 h-4 w-4 text-secondary-foreground" />
+                        <span className="truncate max-w-[150px] sm:max-w-[250px]">{fileName}</span>
+                      </div>
                     )}
                   </div>
-
                 </div>
-                 <div className="relative">
-                  <Label htmlFor="report-text">Or Paste Text</Label>
-                  <Textarea
-                    id="report-text"
-                    placeholder="Paste your medical report text here..."
-                    value={reportText}
-                    onChange={(e) => {
-                      setReportText(e.target.value);
-                      setFileName(''); // Clear filename if text is manually changed
-                    }}
-                    rows={15}
-                    className="mt-1 resize-none"
-                    disabled={isLoading}
-                  />
-                   {isLoading && reportText && !summary && (
+                <div className="relative">
+                  <Label htmlFor="report-text">Report Text</Label>
+                  <ScrollArea className="h-64 w-full rounded-md border mt-1">
+                    <Textarea
+                        id="report-text"
+                        placeholder={isLoading ? "Processing file..." : "Paste or view your medical report text here..."}
+                        value={reportText}
+                        onChange={(e) => {
+                          setReportText(e.target.value);
+                          setFullReportText(e.target.value); // Keep full text in sync
+                          setFileName(''); // Clear filename if text is manually changed
+                          setSummary(null); // Clear summary if text changed
+                          setChatHistory([]); // Clear chat if text changed
+                        }}
+                        rows={15}
+                        className="mt-0 border-0 resize-none focus-visible:ring-0 focus-visible:ring-offset-0 min-h-[254px]" // Match ScrollArea height
+                        disabled={isLoading}
+                        readOnly={isLoading || (!!fileName && !reportText)} // Readonly while loading or if file is loaded but text not manually editable
+                    />
+                   </ScrollArea>
+                   {isLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-background/80 rounded-md">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
                       <span className="ml-2">Processing...</span>
@@ -169,44 +251,123 @@ export default function Home() {
                    )}
                  </div>
 
-                <Button onClick={handleSummarize} disabled={isLoading || !reportText || reportText.startsWith('PDF processing')} className="w-full">
-                  {isLoading ? (
+                <Button onClick={handleSummarize} disabled={isLoading || !reportText} className="w-full">
+                  {isSummarizing ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <FileText className="mr-2 h-4 w-4" />
                   )}
-                  Summarize Report
+                  {summary ? 'Re-Summarize Report' : 'Summarize Report'}
                 </Button>
+
+                 {/* Summary Display */}
+                 {summary && (
+                    <Card className="shadow-inner bg-secondary">
+                        <CardHeader>
+                            <CardTitle className="text-lg">Summary</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                             <Textarea
+                                readOnly
+                                value={summary.summary}
+                                rows={8}
+                                className="bg-secondary text-secondary-foreground resize-none focus-visible:ring-0 focus-visible:ring-offset-0 border-none"
+                              />
+                        </CardContent>
+                    </Card>
+                 )}
+                  {!summary && isSummarizing && (
+                     <div className="flex items-center justify-center h-20">
+                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                         <span className="ml-2 text-muted-foreground">Generating summary...</span>
+                     </div>
+                 )}
+                  {!summary && !isSummarizing && reportText && (
+                     <div className="flex items-center justify-center h-20 text-muted-foreground">
+                         <p>Click "Summarize Report" to generate a summary.</p>
+                     </div>
+                 )}
+                 {!reportText && !isLoading && (
+                    <div className="flex items-center justify-center h-20 text-muted-foreground">
+                         <p>Upload or paste a report first.</p>
+                    </div>
+                 )}
+
               </CardContent>
             </Card>
 
-            {/* Summary Display Section */}
-            <Card className="shadow-md">
+            {/* Chatbot Section */}
+            <Card className="shadow-md lg:col-span-1 flex flex-col h-[calc(100vh-12rem)] max-h-[800px]">
               <CardHeader>
-                <CardTitle>Summary</CardTitle>
-                 <CardDescription>AI-generated summary will appear here.</CardDescription>
+                <CardTitle>Chat with Report</CardTitle>
+                <CardDescription>Ask questions about the uploaded report.</CardDescription>
               </CardHeader>
-              <CardContent>
-                {isLoading && !summary && (
-                   <div className="flex items-center justify-center h-64">
-                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                     <span className="ml-2 text-muted-foreground">Generating summary...</span>
-                   </div>
-                )}
-                {summary ? (
+              <CardContent className="flex-1 flex flex-col gap-4 overflow-hidden">
+                <ScrollArea className="flex-1 pr-4" ref={chatScrollAreaRef}>
                   <div className="space-y-4">
-                     <Textarea
-                        readOnly
-                        value={summary.summary}
-                        rows={17}
-                        className="bg-secondary text-secondary-foreground resize-none focus-visible:ring-0 focus-visible:ring-offset-0 border-none"
-                      />
+                    {chatHistory.length === 0 && !isChatting && (
+                        <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
+                            <Bot size={48} className="mb-4"/>
+                            <p>{fullReportText ? "Ask me anything about the report." : "Upload a report to start chatting."}</p>
+                        </div>
+                    )}
+                    {chatHistory.map((message, index) => (
+                      <div
+                        key={index}
+                        className={cn(
+                          'flex items-start gap-3',
+                          message.sender === 'user' ? 'justify-end' : 'justify-start'
+                        )}
+                      >
+                        {message.sender === 'bot' && (
+                          <div className="bg-primary rounded-full p-2 text-primary-foreground">
+                             <Bot size={16} />
+                           </div>
+                        )}
+                         <div
+                           className={cn(
+                             'max-w-[80%] rounded-lg px-3 py-2 text-sm',
+                             message.sender === 'user'
+                               ? 'bg-primary text-primary-foreground'
+                               : 'bg-secondary text-secondary-foreground'
+                           )}
+                         >
+                          {message.text.split('\n').map((line, i) => (
+                              <p key={i}>{line}</p>
+                          ))}
+                         </div>
+                        {message.sender === 'user' && (
+                           <div className="bg-secondary rounded-full p-2 text-secondary-foreground">
+                            <User size={16} />
+                           </div>
+                        )}
+                      </div>
+                    ))}
+                    {isChatting && (
+                        <div className="flex items-start gap-3 justify-start">
+                             <div className="bg-primary rounded-full p-2 text-primary-foreground">
+                                 <Bot size={16} />
+                             </div>
+                             <div className="bg-secondary text-secondary-foreground rounded-lg px-3 py-2 text-sm">
+                                 <Loader2 className="h-4 w-4 animate-spin inline-block" /> Thinking...
+                             </div>
+                         </div>
+                    )}
                   </div>
-                ) : !isLoading && (
-                  <div className="flex items-center justify-center h-64 text-muted-foreground">
-                     <p>Upload or paste a report and click "Summarize Report".</p>
-                   </div>
-                )}
+                </ScrollArea>
+                <form onSubmit={handleChatSubmit} className="flex items-center gap-2 border-t pt-4">
+                  <Input
+                    placeholder="Ask a question..."
+                    value={userQuestion}
+                    onChange={(e) => setUserQuestion(e.target.value)}
+                    disabled={isChatting || !fullReportText || isLoading}
+                    className="flex-1"
+                  />
+                  <Button type="submit" size="icon" disabled={isChatting || !userQuestion.trim() || !fullReportText || isLoading}>
+                    <Send className="h-4 w-4" />
+                    <span className="sr-only">Send</span>
+                  </Button>
+                </form>
               </CardContent>
             </Card>
           </div>
