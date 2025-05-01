@@ -7,6 +7,7 @@ import {
   SidebarContent,
   SidebarHeader,
   SidebarTrigger,
+  SidebarInset, // Added missing import
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -243,10 +244,10 @@ export default function Home() {
                         readOnly={isLoading || (!!fileName && !reportText)} // Readonly while loading or if file is loaded but text not manually editable
                     />
                    </ScrollArea>
-                   {isLoading && (
+                   {isLoading && !isSummarizing && ( // Show processing only during file load
                     <div className="absolute inset-0 flex items-center justify-center bg-background/80 rounded-md">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <span className="ml-2">Processing...</span>
+                      <span className="ml-2">Processing file...</span>
                     </div>
                    )}
                  </div>
