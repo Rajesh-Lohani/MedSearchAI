@@ -37,9 +37,9 @@ async function initializePdfjs() {
         if (typeof window !== 'undefined' && !pdfjsWorkerInitialized) {
             // Use dynamic import for worker as well to ensure it's loaded correctly
              const workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs')).default;
-             pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
-            // Alternatively, using unpkg:
-            // pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+             // pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc; // Causes issues in some envs
+            // Alternatively, using unpkg - more reliable across envs
+            pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
             pdfjsWorkerInitialized = true;
         }
     }
@@ -119,7 +119,8 @@ export default function Home() {
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
             // Basic check for non-Latin characters which might indicate scanned PDF
-            const hasNonLatin = textContent.items.some((item) => /[^a-zA-Z0-9 .,!?"'$%&()+-=*/:;<>@[\\]^_`{|}~\n\r\t]/u.test((item as TextItem).str));
+            // Fixed regex: Escaped special characters inside [] correctly
+            const hasNonLatin = textContent.items.some((item) => /[^a-zA-Z0-9\s.,!?"'$%&()+\-=*/:;<>@[\\\]^_`{|}~]/u.test((item as TextItem).str));
             if (hasNonLatin && textContent.items.length < 10) { // Heuristic: Few items with strange chars might be OCR needed
               console.warn("PDF might be scanned or contain non-standard text, attempting extraction anyway.");
             }
@@ -320,7 +321,7 @@ export default function Home() {
                         rows={15}
                         className="mt-0 border-0 resize-none focus-visible:ring-0 focus-visible:ring-offset-0 min-h-[254px]" // Match ScrollArea height
                         disabled={isLoading}
-                        readOnly={isLoading || (!!fileName && !reportText && !reportText.length)} // Readonly while loading or if file is loaded but text not manually editable
+                        readOnly={isLoading || (!!fileName && !reportText.length)} // Readonly while loading or if file is loaded but text not manually editable
                     />
                    </ScrollArea>
                    {isLoading && (
