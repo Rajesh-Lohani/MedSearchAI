@@ -98,7 +98,7 @@ graph LR
         %% src/app/page.tsx
         A[Upload File/Paste Text] --> B{File Type?};
         B -- .txt --> C[Read Text];
-        B -- .pdf --> D[Load PDF Library (pdfjs-dist)];
+        B -- .pdf --> D[Load PDF Library: pdfjs-dist];
         B -- .png/.jpg/.webp --> E[Read Image as Data URI];
         D --> F[Extract Text from PDF];
         F -- Text Extraction Failed --> E;
