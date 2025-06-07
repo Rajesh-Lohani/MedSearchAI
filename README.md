@@ -1,6 +1,6 @@
 # MediSummarize - AI-Powered Medical Report Assistant
 
-This is a Next.js application built with Firebase Studio that allows users to upload medical reports (text, PDF, or image files), generate summaries using AI, and chat with an AI assistant about the report's content.
+This is a Next.js application that allows users to upload medical reports (text, PDF, or image files), generate summaries using AI, and chat with an AI assistant about the report's content.
 
 ## Project Structure
 
