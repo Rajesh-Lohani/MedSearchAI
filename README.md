@@ -94,7 +94,8 @@ This is a Next.js application that allows users to upload medical reports (text,
 
 ```mermaid
 graph LR
-    subgraph User Interface (src/app/page.tsx)
+    subgraph User Interface
+        %% src/app/page.tsx
         A[Upload File/Paste Text] --> B{File Type?};
         B -- .txt --> C[Read Text];
         B -- .pdf --> D[Load PDF Library (pdfjs-dist)];
@@ -116,17 +117,20 @@ graph LR
         O --> Q[Display Chatbot Response];
     end
 
-    subgraph Genkit Flows (src/ai/flows/)
+    subgraph Genkit Flows
+        %% src/ai/flows/
         S[extractTextFromImage.ts] --> T[Extract Text from Image using Gemini];
         U[summarizeReport.ts] --> V[Summarize Report using Gemini];
         W[chatWithReport.ts] --> X[Chat with Report using Gemini];
     end
 
-    subgraph Genkit API (src/app/api/genkit/[...slug]/route.ts)
+    subgraph Genkit API
+        %% src/app/api/genkit/[...slug]/route.ts
         Y[API Endpoint for Genkit Flows];
     end
 
-    subgraph Genkit Instance (src/ai/ai-instance.ts)
+    subgraph Genkit Instance
+        %% src/ai/ai-instance.ts
         Z[Initialize Genkit with Google AI Plugin];
     end
 
@@ -139,7 +143,6 @@ graph LR
     Z --> S;
     Z --> V;
     Z --> W;
-```
 
 **Diagram Explanation:**
 
